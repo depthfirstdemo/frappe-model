@@ -401,15 +401,15 @@ def get_file_name(fname, optional_suffix):
 @frappe.whitelist()
 def add_attachments(doctype, name, attachments):
 	"""Add attachments to the given DocType"""
+	frappe.get_doc(doctype, name).check_permission("write")
 	if isinstance(attachments, str):
 		attachments = json.loads(attachments)
 	# loop through attachments
 	files = []
 	for a in attachments:
 		if isinstance(a, str):
-			attach = frappe.db.get_value(
-				"File", {"name": a}, ["file_name", "file_url", "is_private"], as_dict=1
-			)
+			attach = frappe.get_doc("File", a)
+			attach.check_permission("read")
 			# save attachments to new doc
 			f = save_url(
 				attach.file_url, attach.file_name, doctype, name, "Home/Attachments", attach.is_private

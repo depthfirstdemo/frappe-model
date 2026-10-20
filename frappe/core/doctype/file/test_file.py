@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import frappe
+import frappe.share
 from frappe import _
 from frappe.core.api.file import (
 	create_new_folder,
@@ -23,6 +24,7 @@ from frappe.desk.form.utils import add_comment
 from frappe.exceptions import ValidationError
 from frappe.tests.utils import FrappeTestCase, change_settings
 from frappe.utils import get_files_path, set_request
+from frappe.utils.file_manager import add_attachments
 
 if TYPE_CHECKING:
 	from frappe.core.doctype.file.file import File
@@ -621,6 +623,52 @@ class TestAttachment(FrappeTestCase):
 		)
 
 		self.assertTrue(exists)
+
+
+class TestAddAttachmentsPermissions(FrappeTestCase):
+	def tearDown(self):
+		frappe.set_user("Administrator")
+
+	def test_cannot_attach_to_read_only_document(self):
+		frappe.set_user("Administrator")
+		doctype, name = make_test_doc()
+		frappe.share.add(doctype, name, "test4@example.com")
+
+		frappe.set_user("test4@example.com")
+		source = frappe.new_doc("File", file_name="shared.txt", content="shared").insert()
+		target = frappe.get_doc(doctype, name)
+		self.assertTrue(target.has_permission("read"))
+		self.assertFalse(target.has_permission("write"))
+
+		with self.assertRaises(frappe.PermissionError):
+			add_attachments(doctype, name, json.dumps([source.name]))
+		self.assertFalse(frappe.db.exists("File", {"attached_to_doctype": doctype, "attached_to_name": name}))
+
+	def test_cannot_attach_unreadable_private_file(self):
+		frappe.set_user("Administrator")
+		source = frappe.new_doc(
+			"File", file_name="private-source.txt", content="private source", is_private=1
+		).insert()
+
+		frappe.set_user("test4@example.com")
+		doctype, name = make_test_doc()
+		self.assertFalse(frappe.get_doc("File", source.name).has_permission("read"))
+
+		with self.assertRaises(frappe.PermissionError):
+			add_attachments(doctype, name, [source.name])
+		self.assertFalse(frappe.db.exists("File", {"attached_to_doctype": doctype, "attached_to_name": name}))
+
+	def test_can_attach_readable_file_to_writable_document(self):
+		frappe.set_user("test4@example.com")
+		doctype, name = make_test_doc()
+		source = frappe.new_doc(
+			"File", file_name="own-source.txt", content="own source", is_private=1
+		).insert()
+
+		files = add_attachments(doctype, name, [source.name])
+		self.assertEqual(len(files), 1)
+		self.assertEqual(files[0].file_url, source.file_url)
+		self.assertEqual(files[0].attached_to_name, name)
 
 
 class TestAttachmentsAccess(FrappeTestCase):
